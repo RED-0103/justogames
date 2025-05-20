@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tralalelu Defendi - Score On Kill Only</title>
+<style>
+  body {
+    margin: 0;
+    background: radial-gradient(circle at center, #000010, #000000);
+    color: #a0d8f7;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    user-select: none;
+    text-align: left;
+    display: flex;
+    height: 100vh;
+  }
+  #gameArea {
+    flex-grow: 1;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  h1 {
+    margin-top: 10px;
+    font-weight: 700;
+    font-size: 2.5rem;
+    text-shadow: 0 0 16px #28a0ff;
+    text-align: center;
+  }
+  #stats {
+    margin: 8px auto 16px;
+    font-size: 1.2rem;
+    max-width: 700px;
+    text-align: center;
+  }
+  canvas {
+    background: #001022;
+    border: 3px solid #1080ff;
+    border-radius: 8px;
+    display: block;
+    margin: 0 auto;
+    box-shadow: 0 0 15px #1080ff55;
+    cursor: crosshair;
+    max-width: 100%;
+  }
+  #feedback {
+    color: #28e0ff;
+    font-size: 1rem;
+    min-height: 60px;
+    max-width: 700px;
+    margin: 15px auto 20px;
+    background: #002240cc;
+    padding: 10px;
+    border-radius: 6px;
+    font-family: monospace;
+    user-select: text;
+    text-align: center;
+  }
+  #instructions {
+    max-width: 700px;
+    font-size: 1rem;
+    margin: 0 auto;
+    color: #60b0ffbb;
+    text-align: center;
+  }
+  #controls {
+    width: 180px;
+    background: #001622dd;
+    border-left: 3px solid #1080ff;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    box-sizing: border-box;
+    gap: 12px;
+  }
+  #controls button {
+    background: #005f9e;
+    border: none;
+    color: #fff;
+    font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    font-size: 1rem;
+    white-space: nowrap;
+  }
+  #controls button.selected {
+    background: #28a0ff;
+    box-shadow: 0 0 10px #28a0ff;
+  }
+  #controls button:hover:not(:disabled) {
+    background: #3399ff;
+  }
+  #controls button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  #controls button span.icon {
+    font-size: 20px;
+    width: 24px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="gameArea">
+  <h1>Tralalelu Defendi</h1>
+  <div id="stats" aria-live="polite" aria-atomic="true">
+    Round: <span id="round">1</span> &nbsp;|&nbsp;
+    Score: <span id="score">0</span> &nbsp;|&nbsp;
+    Resources: <span id="resources">40</span> &nbsp;|&nbsp;
+    Lives: <span id="lives">100</span>
+  </div>
+  <canvas id="gameCanvas" width="800" height="600" aria-label="Game Canvas"></canvas>
+  <div id="feedback" role="alert" aria-live="assertive">You can place towers at any time. Select a tower type or shovel to remove towers. Click "Start Game" to begin alien waves.</div>
+  <div id="instructions">
+    Towers cost resources. You can place towers anywhere except on the enemy path.<br/>
+    Shovel tool costs 500 resources to remove towers.<br/>
+    Each enemy killed grants 5 points and 25 resources. Each enemy that reaches the end subtracts 5 points and 5 lives.<br/>
+    You have 100 lives. Choose your strategy wisely to defend the Galactic Core!
+  </div>
+</div>
+<div id="controls" role="group" aria-label="Game Tools and Controls">
+  <button id="tower1Btn" class="selected" title="Single Shot Tower (Cost: 20)" aria-pressed="true">
+    <span class="icon" style="color:#3a6eff;">🔫</span> Single Shot (20)
+  </button>
+  <button id="tower2Btn" title="Burst Tower (Cost: 100)" aria-pressed="false" style="color:purple;">
+    <span class="icon">🔥</span> Burst (100)
+  </button>
+  <button id="tower3Btn" title="Automatic Tower (Cost: 200)" aria-pressed="false" style="color:#ff4646;">
+    <span class="icon">🚀</span> Automatic (200)
+  </button>
+  <button id="tower4Btn" title="Sniper Tower (Cost: 300)" aria-pressed="false" style="color:#ffd93b;">
+    <span class="icon">🎯</span> Sniper (300)
+  </button>
+  <button id="shovelBtn" title="Shovel tool to remove towers (Cost: 500)" aria-pressed="false" style="color:#aaa;">
+    <span class="icon">🛠️</span> Shovel (500)
+  </button>
+  <button id="startBtn" type="button" aria-live="polite">Start Game</button>
+  <button id="endBtn" type="button" aria-live="polite">End Game</button> <!-- NEW BUTTON -->
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  let round = 1, score = 0, resources = 40, lives = 100, gameStarted = false, selectedTool = 1;
+  const analytics = {
+    towersBuilt: 0, towersRemoved: 0, enemiesDefeated: 0,
+    roundsCompleted: 0, totalGameTimeMs: 0, lastTimestamp: performance.now(),
+  };
+  const towerTypes = {
+    1: { name: 'Single Shot', cost: 20, range: 90, fireRate: 700, burst: 1, burstDelay: 0, color: '#3a6eff', imageSrc: 'https://i.imgur.com/cTjkJ9X.png' },
+    2: { name: 'Burst', cost: 100, range: 115, fireRate: 1200, burst: 3, burstDelay: 150, color: 'purple', imageSrc:'https://i.imgur.com/Tqa64Wy.png'},
+    3: { name: 'Automatic', cost: 200, range: 80, fireRate: 150, burst: 1, burstDelay: 0, color: '#ff4646', imageSrc: 'https://i.imgur.com/InEecRZ.png' },
+    4: { name: 'Sniper', cost: 300, range: 300, fireRate: 2000, burst: 1, burstDelay: 0, color: '#ffd93b', imageSrc: 'https://i.imgur.com/sWljqDN.png' },
+  };
+  const shovelCost = 500;
+  const towerImages = {};
+  Object.entries(towerTypes).forEach(([id, t]) => {
+    const img = new Image();
+    img.src = t.imageSrc;
+    towerImages[id] = img;
+  });
+  const castleImg = new Image();
+  castleImg.src = 'https://i.imgur.com/YCtIHfJ.png';
+
+  const roundEl = document.getElementById('round');
+  const scoreEl = document.getElementById('score');
+  const resourcesEl = document.getElementById('resources');
+  const livesEl = document.getElementById('lives');
+  const feedbackEl = document.getElementById('feedback');
+  const toolButtons = {
+    1: document.getElementById('tower1Btn'),
+    2: document.getElementById('tower2Btn'),
+    3: document.getElementById('tower3Btn'),
+    4: document.getElementById('tower4Btn'),
+    shovel: document.getElementById('shovelBtn'),
+  };
+  const startButton = document.getElementById('startBtn');
+
+  const path = [
+    {x: 0, y: 300},
+    {x: 180, y: 300},
+    {x: 180, y: 120},
+    {x: 380, y: 120},
+    {x: 380, y: 480},
+    {x: 580, y: 480},
+    {x: 580, y: 250},
+    {x: 800, y: 250},
+  ];
+  const pathBounds = path.map((point, i) => {
+    if(i === path.length -1) return null;
+    const p1 = path[i], p2 = path[i+1];
+    return {minX: Math.min(p1.x, p2.x) -20, maxX: Math.max(p1.x, p2.x) +20, minY: Math.min(p1.y, p2.y) -20, maxY: Math.max(p1.y, p2.y) +20};
+  }).filter(Boolean);
+
+  class Alien {
+    constructor() {
+      this.radius = 14;
+      this.speed = 0.9 + round * 0.15;
+      this.hpMax = 1 + Math.floor(round/4);
+      this.hp = this.hpMax;
+      this.progress = 0;
+      this.pos = {...path[0]};
+      this.isDead = false;
+      this.reachedEnd = false;
+    }
+    update(deltaTime) {
+      if (this.isDead || this.reachedEnd) return;
+      if (this.progress >= path.length -1) {
+        this.reachedEnd = true;
+        lives -= 5;
+        score = Math.max(0, score -5);
+        updateStats();
+        return;
+      }
+      const segmentIndex = Math.floor(this.progress);
+      const startP = path[segmentIndex];
+      const endP = path[segmentIndex +1];
+      const segLen = distance(startP, endP);
+      const segProgress = this.progress %1;
+      this.pos.x = startP.x + (endP.x - startP.x) * segProgress;
+      this.pos.y = startP.y + (endP.y - startP.y) * segProgress;
+      this.progress += (this.speed * deltaTime * 0.06) / segLen;
+      if (this.progress > path.length -1) {
+        this.reachedEnd = true;
+        lives -= 5;
+        score = Math.max(0, score -5);
+        updateStats();
+      }
+    }
+    draw() {
+      if(this.isDead) return;
+      ctx.save();
+      ctx.shadowColor = this.hp < this.hpMax ? 'crimson' : 'lime';
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = this.hp < this.hpMax ? '#ff5555' : '#55ff55';
+      ctx.beginPath();
+      ctx.arc(this.pos.x, this.pos.y, this.radius, 0, Math.PI *2);
+      ctx.fill();
+      // HP bar
+      ctx.shadowBlur = 0;
+      const healthPct = this.hp / this.hpMax;
+      const barWidth = 30;
+      const barHeight = 5;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(this.pos.x - barWidth/2, this.pos.y - this.radius -12, barWidth, barHeight);
+      ctx.fillStyle = healthPct > 0.6 ? '#0f0': (healthPct > 0.3 ? '#ff0': '#f00');
+      ctx.fillRect(this.pos.x - barWidth/2, this.pos.y - this.radius - 12, barWidth * healthPct, barHeight);
+      ctx.restore();
+    }
+  }
+
+  class Tower {
+    constructor(x,y,type) {
+      this.x = x;
+      this.y = y;
+      this.type = type;
+      this.config = towerTypes[type];
+      this.range = this.config.range;
+      this.fireRate = this.config.fireRate;
+      this.burst = this.config.burst;
+      this.burstDelay = this.config.burstDelay;
+      this.lastShot = 0;
+      this.burstshotsFired = 0;
+    }
+    draw() {
+      ctx.save();
+      // Colored base circle instead of black square
+      ctx.fillStyle = this.config.color;
+      ctx.shadowColor = this.config.color;
+      ctx.shadowBlur = 15;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 22, 0, Math.PI *2);
+      ctx.fill();
+
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#003366';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 22, 0, Math.PI*2);
+      ctx.stroke();
+
+      // Range circle lightly colored
+      ctx.strokeStyle = this.config.color + '44';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.range, 0, Math.PI*2);
+      ctx.stroke();
+
+      // Tower icon
+      const img = towerImages[this.type];
+      if(img && img.complete){
+        ctx.drawImage(img, this.x -15, this.y -15, 30, 30);
+      }
+
+      // Price below tower
+      ctx.fillStyle = '#fff';
+      ctx.font = '13px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`$${this.config.cost}`, this.x, this.y + 37);
+      ctx.restore();
+    }
+    canShoot() {
+      return performance.now() - this.lastShot > this.fireRate;
+    }
+    shoot(target) {
+      if(this.burst > 1){
+        this.burstshotsFired = 0;
+        this.fireBurst(target);
+      } else {
+        this.lastShot = performance.now();
+        bullets.push(new Bullet(this.x, this.y, target));
+      }
+    }
+    fireBurst(target) {
+      if(this.burstshotsFired >= this.burst) {
+        this.lastShot = performance.now();
+        return;
+      }
+      bullets.push(new Bullet(this.x, this.y, target));
+      this.burstshotsFired++;
+      setTimeout(() => this.fireBurst(target), this.burstDelay);
+    }
+  }
+
+  class Bullet {
+    constructor(x,y,target) {
+      this.x = x;
+      this.y = y;
+      this.radius = 5;
+      this.speed = 8;
+      this.target = target;
+      this.active = true;
+      const dx = target.pos.x - x;
+      const dy = target.pos.y - y;
+      const len = Math.sqrt(dx*dx + dy*dy);
+      this.vx = this.speed * dx / len;
+      this.vy = this.speed * dy / len;
+    }
+    update() {
+      if(!this.active) return;
+      this.x += this.vx;
+      this.y += this.vy;
+      const distToTarget = distance({x:this.x, y:this.y}, this.target.pos);
+      if(distToTarget < this.radius + this.target.radius) {
+        this.target.hp--;
+        if(this.target.hp <= 0 && !this.target.isDead){
+          this.target.isDead = true;
+          score += 2;
+          resources += 2;
+          analytics.enemiesDefeated++;
+          updateStats();
+        }
+        this.active = false;
+      }
+      if(this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height){
+        this.active = false;
+      }
+    }
+    draw() {
+      if(!this.active) return;
+      ctx.save();
+      ctx.fillStyle = '#ffff77';
+      ctx.shadowColor = '#ffffaa';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function distance(p1,p2) {
+    return Math.sqrt((p1.x-p2.x)**2 + (p1.y-p2.y)**2);
+  }
+
+  function isOnPath(x,y){
+    for (const rect of pathBounds){
+      if(x >= rect.minX && x<= rect.maxX && y>= rect.minY && y<= rect.maxY)
+        return true;
+    }
+    return false;
+  }
+
+  let aliens = [];
+  let towers = [];
+  let bullets = [];
+
+  function spawnAliens() {
+    const count = 10; // Set the number of aliens to spawn to 10
+    for(let i = 0; i < count; i++){
+      setTimeout(() => aliens.push(new Alien()), i * 900);
+    }
+  }
+
+
+  function drawPath(){
+    ctx.save();
+    ctx.strokeStyle = '#104078';
+    ctx.lineWidth = 20;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = '#1070ff55';
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    ctx.moveTo(path[0].x, path[0].y);
+    for(let i=1; i<path.length; i++){
+      ctx.lineTo(path[i].x, path[i].y);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // Draw castle icon at map end:
+    const castleX = path[path.length - 1].x + 7;
+    const castleY = path[path.length - 1].y - 30;
+    if (castleImg.complete && castleImg.naturalWidth) {
+      ctx.drawImage(castleImg, castleX, castleY, 50, 50);
+    }
+  }
+
+  function updateStats(){
+    roundEl.textContent = round;
+    scoreEl.textContent = score;
+    resourcesEl.textContent = resources;
+    livesEl.textContent = lives;
+  }
+
+  function showRoundSummary(){
+    analytics.roundsCompleted = round-1;
+    const towersUsed = analytics.towersBuilt;
+    const towersRemoved = analytics.towersRemoved;
+    const enemiesDown = analytics.enemiesDefeated;
+    const avgResSpent = (towersUsed*50)/(round-1) || 0;
+    const summary = `Round ${round-1} Complete! 🛰️  
+Towers Built: ${towersUsed}  
+Towers Removed: ${towersRemoved}  
+Enemies Defeated: ${enemiesDown}  
+Avg Resources Spent Per Round: ${avgResSpent.toFixed(1)}  
+Total Play Time: ${(analytics.totalGameTimeMs/1000).toFixed(1)}s`;
+    feedbackEl.textContent = summary;
+  }
+
+  function gameOver() {
+    feedbackEl.textContent = `💥 Game Over! Final Score: ${score}. Refresh page to try again.`;
+  }
+
+  function isValidPlacement(x,y) {
+    const margin = 24;
+    if (isOnPath(x,y)) return false;
+    for(const tower of towers)
+      if(distance({x,y}, tower) < margin*2) return false;
+    if(x < margin || x > canvas.width - margin || y < margin || y > canvas.height - margin) return false;
+    return true;
+  }
+
+  function drawPlacementOverlay() {
+    const step = 20;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,255,0,0.12)';
+    for(let x = 20; x < canvas.width-20; x += step){
+      for(let y = 20; y < canvas.height-20; y += step){
+        if(isValidPlacement(x,y)){
+          ctx.beginPath();
+          ctx.arc(x,y,10,0,Math.PI*2);
+          ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+  }
+  // Reset game function
+  function resetGame() {
+    // Cancel the animation frame if it's running
+    if (animationFrameId) {
+      cancelAnimationFrame(animationFrameId);
+      animationFrameId = null;
+    }
+    
+    // Reset all game state variables
+    round = 1;
+    score = 0;
+    resources = 40;
+    lives = 100;
+    gameStarted = false;
+    selectedTool = 1;
+    
+    // Clear game objects
+    aliens = [];
+    towers = [];
+    bullets = [];
+    
+    // Reset analytics
+    analytics.towersBuilt = 0;
+    analytics.towersRemoved = 0;
+    analytics.enemiesDefeated = 0;
+    analytics.roundsCompleted = 0;
+    analytics.totalGameTimeMs = 0;
+    analytics.lastTimestamp = performance.now();
+    
+    // Reset UI
+    startButton.disabled = false;
+    Object.entries(toolButtons).forEach(([key, btn]) => {
+      btn.classList.toggle('selected', key === '1');
+      btn.setAttribute('aria-pressed', key === '1' ? 'true' : 'false');
+    });
+    
+    // Update UI elements
+    updateStats();
+    feedbackEl.textContent = "Game reset! You can place towers at any time. Select a tower type or shovel to remove towers. Click 'Start Game' to begin alien waves.";
+
+  }
+
+  let lastTime = performance.now();
+  function gameLoop(timestamp){
+    let deltaTime = timestamp - lastTime;
+    lastTime = timestamp;
+    analytics.totalGameTimeMs += deltaTime;
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    drawPath();
+    drawPlacementOverlay();
+    towers.forEach(t => t.draw());
+    aliens = aliens.filter(a => !a.isDead && !a.reachedEnd);
+    aliens.forEach(a => {a.update(deltaTime); a.draw();});
+    towers.forEach(t => {
+      if(!t.canShoot()) return;
+      const inRange = aliens.filter(alien => distance({x: t.x, y: t.y}, alien.pos) <= t.range);
+      if(inRange.length > 0){
+        inRange.sort((a,b) => b.progress - a.progress);
+        t.shoot(inRange[0]);
+      }
+    });
+    bullets = bullets.filter(b => b.active);
+    bullets.forEach(b => {b.update(); b.draw();});
+
+    updateStats();
+
+    if(aliens.length === 0 && gameStarted && lives > 0){
+      showRoundSummary();
+      round++;
+      spawnAliens(5 + round*3);
+    }
+
+    if(lives <= 0){
+      gameOver();
+      return;
+    }
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  Object.entries(toolButtons).forEach(([key, btn]) => {
+    btn.addEventListener('click', () => {
+      selectedTool = (key === 'shovel') ? 'shovel' : Number(key);
+      Object.entries(toolButtons).forEach(([k, b]) => {
+        b.classList.toggle('selected', k === key);
+        b.setAttribute('aria-pressed', k === key ? 'true' : 'false');
+      });
+      if(selectedTool === 'shovel'){
+        feedbackEl.textContent = `Shovel selected. Remove towers at cost ${shovelCost}`;
+      } else {
+        feedbackEl.textContent = `Selected tower: ${towerTypes[selectedTool].name}`;
+      }
+    });
+  });
+
+  canvas.addEventListener('click', e => {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    if(selectedTool === 'shovel'){
+      let towerIndex = towers.findIndex(t => distance(t, {x:clickX, y:clickY}) < 25);
+      if(towerIndex === -1){
+        feedbackEl.textContent = 'No tower at clicked location to remove.';
+        return;
+      }
+      if(resources < shovelCost){
+        feedbackEl.textContent = `🛑 Not enough resources for shovel! Cost: ${shovelCost}`;
+        return;
+      }
+      towers.splice(towerIndex,1);
+      resources -= shovelCost;
+      analytics.towersRemoved++;
+      feedbackEl.textContent = `Tower removed! Resources left: ${resources}`;
+      updateStats();
+      return;
+    }
+
+    const towerCost = towerTypes[selectedTool].cost;
+    if(resources < towerCost){
+      feedbackEl.textContent = `🛑 Not enough resources to build ${towerTypes[selectedTool].name} tower! Cost: ${towerCost}`;
+      return;
+    }
+    if(!isValidPlacement(clickX, clickY)){
+      feedbackEl.textContent = '🚫 Cannot place tower on path, other tower, or outside bounds.';
+      return;
+    }
+
+    towers.push(new Tower(clickX, clickY, selectedTool));
+    resources -= towerCost;
+    analytics.towersBuilt++;
+    feedbackEl.textContent = `Built ${towerTypes[selectedTool].name} Tower! Defend the Galactic Core!`;
+    updateStats();
+  });
+
+  startButton.addEventListener('click', () => {
+    if(gameStarted) return;
+    gameStarted = true;
+    startButton.disabled = true;
+    feedbackEl.textContent = 'Game Started! Aliens incoming! Place towers to defend.';
+    spawnAliens(8);
+    lastTime = performance.now();
+    animationFrameId = requestAnimationFrame(gameLoop);
+  });
+  document.getElementById('endBtn').addEventListener('click', () => {
+    resetGame();
+  });
+
+
+
+  updateStats();
+  animationFrameId = requestAnimationFrame(gameLoop);
+})();
+</script>
+</body>
+</html>
